@@ -1,0 +1,932 @@
+{
+  "name": "LeadForge - Business Discovery & Qualification v2 (FastAPI Integration)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "leadforge",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1680,
+        160
+      ],
+      "id": "a1b2c3d4-1111-4000-8000-000000000001",
+      "name": "Webhook Trigger",
+      "webhookId": "leadforge-fastapi-webhook-v2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first()?.json || {};\nconst payload = raw.body && typeof raw.body === 'object' ? raw.body : raw;\n\n// 1. Validate search_run_id as a positive integer (> 0)\nconst rawSearchRunId = payload.search_run_id;\nif (\n  rawSearchRunId === undefined ||\n  rawSearchRunId === null ||\n  String(rawSearchRunId).trim() === '' ||\n  typeof rawSearchRunId === 'boolean'\n) {\n  throw new Error('Invalid search_run_id: must be a positive integer.');\n}\nconst searchRunId = Number(rawSearchRunId);\nif (!Number.isInteger(searchRunId) || searchRunId <= 0) {\n  throw new Error('Invalid search_run_id: must be a positive integer (> 0).');\n}\n\n// 2. Validate required city and business_type\nconst city = String(payload.city || '').trim();\nconst businessType = String(payload.business_type || '').trim();\nif (!city) {\n  throw new Error('Missing required field: city');\n}\nif (!businessType) {\n  throw new Error('Missing required field: business_type');\n}\n\n// 3. Validate and constrain max_results to integer in [1, 500] with safe default 20\nlet maxResults = 20;\nif (\n  payload.max_results !== undefined &&\n  payload.max_results !== null &&\n  String(payload.max_results).trim() !== ''\n) {\n  if (typeof payload.max_results === 'boolean') {\n    throw new Error('Invalid max_results: must be an integer between 1 and 500.');\n  }\n  const parsedMax = Number(payload.max_results);\n  if (!Number.isInteger(parsedMax) || parsedMax < 1 || parsedMax > 500) {\n    throw new Error('Invalid max_results: must be an integer between 1 and 500.');\n  }\n  maxResults = parsedMax;\n}\n\n// 4. Resolve callback URL and fail explicitly if missing or loopback/localhost\nconst envObj = typeof $env !== 'undefined' && $env ? $env : {};\nconst envBackendPublicUrl = envObj.BACKEND_PUBLIC_URL\n  ? `${String(envObj.BACKEND_PUBLIC_URL).trim().replace(/\\/+$/, '')}/api/v1/integrations/n8n/callback`\n  : '';\nconst envFastApiCallbackUrl = envObj.FASTAPI_CALLBACK_URL\n  ? String(envObj.FASTAPI_CALLBACK_URL).trim()\n  : '';\nconst callbackUrl = String(\n  payload.callback_url ||\n  envBackendPublicUrl ||\n  envFastApiCallbackUrl ||\n  ''\n).trim();\n\nif (!callbackUrl) {\n  throw new Error(\n    'Missing required callback_url: provide callback_url in webhook payload or configure BACKEND_PUBLIC_URL / FASTAPI_CALLBACK_URL.'\n  );\n}\n\nlet parsedCallbackUrl;\ntry {\n  parsedCallbackUrl = new URL(callbackUrl);\n} catch (_err) {\n  throw new Error(`Invalid callback_url format: ${callbackUrl}`);\n}\n\nif (parsedCallbackUrl.protocol !== 'http:' && parsedCallbackUrl.protocol !== 'https:') {\n  throw new Error('Invalid callback_url protocol: must use http or https.');\n}\n\nconst callbackHost = (parsedCallbackUrl.hostname || '').toLowerCase();\nif (['127.0.0.1', 'localhost', '::1', '0.0.0.0'].includes(callbackHost)) {\n  throw new Error(\n    `Invalid callback_url host (${callbackHost}): loopback/localhost callback URLs are not permitted.`\n  );\n}\n\nconst testMode = Boolean(\n  payload.test_mode === true ||\n  city.toUpperCase().startsWith('TEST_ONLY_')\n);\n\nconst execId =\n  typeof $execution !== 'undefined' && $execution && $execution.id\n    ? String($execution.id)\n    : 'local-exec';\n\nreturn [\n  {\n    json: {\n      search_run_id: searchRunId,\n      city,\n      business_type: businessType,\n      max_results: maxResults,\n      callback_url: callbackUrl,\n      test_mode: testMode,\n      execution_id: execId\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        160
+      ],
+      "id": "a1b2c3d4-1111-4000-8000-000000000002",
+      "name": "Normalize Trigger Input"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "controlled-test-mode-check",
+              "leftValue": "={{ Boolean($json.test_mode) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1280,
+        160
+      ],
+      "id": "a1b2c3d4-1111-4000-8000-000000000007",
+      "name": "IF - Is Controlled Test Mode"
+    },
+    {
+      "parameters": {
+        "jsCode": "const trigger = $('Normalize Trigger Input').first().json;\nconst placeId = `TEST_PLACE_RUN_${trigger.search_run_id}`;\nconst title = `[TEST_ONLY] ${trigger.business_type} (${trigger.city})`;\n\nreturn [\n  {\n    json: {\n      company_name: title,\n      title,\n      place_id: placeId,\n      placeId,\n      website: 'https://test-only-verification.example.com',\n      address: `100 Test Verification Way, ${trigger.city}`,\n      phone: '+1-555-010-9999',\n      city: trigger.city,\n      business_type: trigger.business_type,\n      categories: [trigger.business_type],\n      rating: 4.9,\n      reviews_count: 42,\n      processing_status: 'completed',\n      analysis: {\n        ai_company_name: title,\n        business_summary: 'Controlled test-mode synthesis (Apify, Gemini, and Google Sheets bypassed).',\n        personalization_observation: 'Verified webhook -> n8n -> HTTPS callback -> FastAPI pipeline.',\n        potential_opportunity: 'End-to-end orchestration verified without external side effects.',\n        icebreaker: 'Controlled integration verification complete.',\n        confidence: 0.9\n      },\n      raw_payload: {\n        apify: {\n          title,\n          placeId,\n          totalScore: 4.9,\n          reviewsCount: 42,\n          website: 'https://test-only-verification.example.com',\n          address: `100 Test Verification Way, ${trigger.city}`,\n          city: trigger.city,\n          categories: [trigger.business_type],\n          controlled_test_mode: true\n        },\n        stage1_ai: {\n          business_summary: 'Controlled test-mode synthesis (Apify, Gemini, and Google Sheets bypassed).',\n          website_status: 'active',\n          confidence: 'high'\n        },\n        stage2_ai: {\n          company_name: title,\n          personalization_observation: 'Verified webhook -> n8n -> HTTPS callback -> FastAPI pipeline.',\n          potential_opportunity: 'End-to-end orchestration verified without external side effects.',\n          icebreaker: 'Controlled integration verification complete.'\n        },\n        ai_company_name: title,\n        processing_status: 'completed'\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        -128
+      ],
+      "id": "a1b2c3d4-1111-4000-8000-000000000008",
+      "name": "Build Controlled Test Lead"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/compass~google-maps-extractor/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  includeWebResults: false,\n  language: \"en\",\n  locationQuery: $json.city,\n  maxCrawledPlacesPerSearch: Number($json.max_results || 20),\n  maximumLeadsEnrichmentRecords: 0,\n  scrapeContacts: false,\n  scrapeDirectories: false,\n  scrapePlaceDetailPage: false,\n  scrapeSocialMediaProfiles: {\n    facebooks: false,\n    instagrams: false,\n    tiktoks: false,\n    twitters: false,\n    youtubes: false\n  },\n  scrapeTableReservationProvider: false,\n  searchStringsArray: [$json.business_type],\n  skipClosedPlaces: false\n}) }}",
+        "options": {
+          "redirect": {
+            "redirect": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1168,
+        160
+      ],
+      "id": "0eade18e-f8cf-4200-9912-8b5054133705",
+      "name": "HTTP Request",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pVNByJcoQNs66qd2",
+          "name": "Header Auth account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d9867d3c-9e82-404d-b3fb-477fc20d8c8f",
+              "name": "title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "a5c02ad6-32bd-4d64-babb-1a3c28497321",
+              "name": "categories",
+              "value": "={{ $json.categories }}",
+              "type": "array"
+            },
+            {
+              "id": "6e554558-417a-4685-bca4-1407aa831fac",
+              "name": "city",
+              "value": "={{ $json.city || $('Normalize Trigger Input').first().json.city }}",
+              "type": "string"
+            },
+            {
+              "id": "8f6b2d37-043e-4d43-9c3b-a618cddf6560",
+              "name": "website",
+              "value": "={{ $json.website }}",
+              "type": "string"
+            },
+            {
+              "id": "c36cc9c3-43d6-4613-8750-a7e8601463df",
+              "name": "placeId",
+              "value": "={{ $json.placeId }}",
+              "type": "string"
+            },
+            {
+              "id": "f039846c-df76-4e3d-8cbd-1567eec08388",
+              "name": "address",
+              "value": "={{ $json.address }}",
+              "type": "string"
+            },
+            {
+              "id": "013c0f5a-d986-4726-aaea-f6ddb35f8279",
+              "name": "phone",
+              "value": "={{ $json.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "7aeaca03-9366-4ddf-8e16-657425f1adda",
+              "name": "reviewsCount",
+              "value": "={{ $json.reviewsCount }}",
+              "type": "number"
+            },
+            {
+              "id": "7aeaca03-9366-4ddf-8e16-657425f1addb",
+              "name": "totalScore",
+              "value": "={{ $json.totalScore }}",
+              "type": "number"
+            },
+            {
+              "id": "7aeaca03-9366-4ddf-8e16-657425f1addc",
+              "name": "raw_apify",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -960,
+        160
+      ],
+      "id": "9cc4c4fc-36ba-4a06-bb3b-e7c3ba6f6f5e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst trigger = $('Normalize Trigger Input').first().json;\n\n// Fail explicitly if Apify returned an HTTP/API error object instead of silently producing an empty completed batch\nfor (const item of items) {\n  const data = item.json || {};\n  const rawApify = data.raw_apify && typeof data.raw_apify === 'object' ? data.raw_apify : {};\n  const statusCode = Number(data.statusCode ?? rawApify.statusCode ?? data.status ?? rawApify.status ?? 0);\n  const errObj =\n    data.error ||\n    data.errorMessage ||\n    rawApify.error ||\n    rawApify.errorMessage ||\n    (data.data && typeof data.data === 'object' && data.data.error ? data.data.error : null);\n\n  if (errObj || (Number.isFinite(statusCode) && statusCode >= 400)) {\n    const detail =\n      typeof errObj === 'string'\n        ? errObj\n        : errObj && typeof errObj === 'object'\n          ? JSON.stringify(errObj)\n          : `HTTP status ${statusCode}`;\n    throw new Error(`Apify discovery request failed: ${detail}`);\n  }\n}\n\nfunction normalizeWebsite(url) {\n  if (!url || typeof url !== 'string' || !url.trim()) return null;\n  let raw = url.trim();\n  if (!raw.includes('://')) raw = 'http://' + raw;\n  try {\n    const parsed = new URL(raw);\n    let host = (parsed.hostname || '').toLowerCase();\n    if (host.startsWith('www.')) host = host.slice(4);\n    if (!host || !host.includes('.')) return null;\n    const path = (parsed.pathname || '').replace(/\\/+$/, '').toLowerCase();\n    return `${host}${path}`;\n  } catch (_e) {\n    return null;\n  }\n}\n\nfunction normalizeText(val) {\n  if (!val || typeof val !== 'string') return null;\n  const cleaned = val.trim().toLowerCase().replace(/\\s+/g, ' ');\n  return cleaned || null;\n}\n\nconst seenKeys = new Set();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json || {};\n  const rawTitle = data.title ? String(data.title).trim() : '';\n  if (!rawTitle) {\n    continue;\n  }\n\n  const rawApify = data.raw_apify && typeof data.raw_apify === 'object'\n    ? { ...data.raw_apify }\n    : { ...data };\n  delete rawApify.raw_apify;\n\n  const placeId = String(data.placeId || data.place_id || rawApify.placeId || '').trim() || null;\n  const website = data.website ? String(data.website).trim() : '';\n  const address = data.address ? String(data.address).trim() : '';\n  const phone = data.phone ? String(data.phone).trim() : '';\n  const city = String(data.city || trigger.city || '').trim();\n  const categories = Array.isArray(data.categories) ? data.categories : [];\n  const businessType = String(trigger.business_type || categories[0] || '').trim();\n\n  const rawScore = data.totalScore ?? data.rating ?? rawApify.totalScore ?? null;\n  const rating = rawScore !== null && rawScore !== undefined && rawScore !== '' ? Number(rawScore) : null;\n\n  const rawReviews = data.reviewsCount ?? data.reviews_count ?? rawApify.reviewsCount ?? null;\n  const reviewsCount = rawReviews !== null && rawReviews !== undefined && rawReviews !== '' ? Number(rawReviews) : null;\n\n  // Deduplication priority: 1) placeId, 2) normalized website, 3) normalized company_name + address\n  let dedupKey = null;\n  const normWeb = normalizeWebsite(website);\n  const normName = normalizeText(rawTitle);\n  const normAddr = normalizeText(address);\n\n  if (placeId) {\n    dedupKey = `place:${placeId.toLowerCase()}`;\n  } else if (normWeb) {\n    dedupKey = `web:${normWeb}`;\n  } else if (normName && normAddr) {\n    dedupKey = `name_addr:${normName}|${normAddr}`;\n  }\n\n  // If a reliable key exists and was already seen in this execution, skip duplicate.\n  // If no reliable key exists (dedupKey === null), retain the record.\n  if (dedupKey && seenKeys.has(dedupKey)) {\n    continue;\n  }\n  if (dedupKey) {\n    seenKeys.add(dedupKey);\n  }\n\n  results.push({\n    json: {\n      search_run_id: trigger.search_run_id,\n      execution_id: trigger.execution_id,\n      title: rawTitle,\n      company_name: rawTitle,\n      placeId,\n      place_id: placeId,\n      categories,\n      business_type: businessType,\n      city,\n      website,\n      address,\n      phone,\n      totalScore: rating,\n      rating,\n      reviewsCount,\n      reviews_count: reviewsCount,\n      raw_apify: rawApify\n    }\n  });\n}\n\nif (results.length === 0) {\n  return [\n    {\n      json: {\n        _empty_batch: true,\n        search_run_id: trigger.search_run_id,\n        execution_id: trigger.execution_id\n      }\n    }\n  ];\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        160
+      ],
+      "id": "47b7a032-01f8-41c4-8d96-6c881683a996",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "empty-batch-check-01",
+              "leftValue": "={{ Boolean($json._empty_batch) }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -560,
+        160
+      ],
+      "id": "a1b2c3d4-1111-4000-8000-000000000003",
+      "name": "IF - Has Discovered Businesses"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -352,
+        160
+      ],
+      "id": "513dfd56-21f0-4ab0-918b-c0be35f00149",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "df338763-1883-48f6-b1b9-175ea5542aea",
+              "leftValue": "={{ $json.website }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -144,
+        160
+      ],
+      "id": "bbfcfb14-6325-478e-8cc2-3e930f4e56b3",
+      "name": "IF - Has Website"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.website }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "website_content"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        80,
+        80
+      ],
+      "id": "bf457078-7ad2-4a72-8b0c-04ee62add6e4",
+      "name": "scraper",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9df66f64-bacb-4366-a27f-0abc937b13cd",
+              "name": "website_content",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        80,
+        256
+      ],
+      "id": "bf35dee6-c198-4bab-9578-dce41f786aa4",
+      "name": "Prepare - No Website"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=\nYou are a business research analyst working for LeadForge.\n\nAnalyze the business using only the information provided below.\nDo not invent facts. If information is unavailable, return null.\n\nBUSINESS INFORMATION:\nName: {{ $('Loop Over Items').item.json.title || \"Unknown\" }}\nCategory: {{ JSON.stringify($('Loop Over Items').item.json.categories || []) }}\nCity: {{ $('Loop Over Items').item.json.city || \"Unknown\" }}\nAddress: {{ $('Loop Over Items').item.json.address || \"Unknown\" }}\nWebsite: {{ $('Loop Over Items').item.json.website || \"No website\" }}\nPhone: {{ $('Loop Over Items').item.json.phone || \"Unknown\" }}\nGoogle Rating: {{ $('Loop Over Items').item.json.rating ?? null }}\nReviews Count: {{ $('Loop Over Items').item.json.reviews_count ?? 0 }}\n\nWEBSITE CONTENT:\n{{ $json.website_content || $json.data || \"No website content available\" }}\n\nAnalyze the business and return ONLY valid JSON using this structure:\n\n{\n  \"business_summary\": \"Brief factual description\",\n  \"services\": [],\n  \"website_status\": \"active | missing | inaccessible\",\n  \"website_observations\": [],\n  \"potential_digital_needs\": [],\n  \"opportunity_reasons\": [],\n  \"evidence\": [],\n  \"confidence\": \"low | medium | high\"\n}\n\nRules:\n- Do not assume that a missing website means the business needs one.\n- Distinguish observed facts from possible opportunities.\n- Do not invent website problems.\n- Keep the analysis concise and evidence-based.\n",
+        "hasOutputParser": false,
+        "messages": {
+          "messageValues": []
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        304,
+        160
+      ],
+      "id": "1d0247f1-4bac-4299-b337-517f4805d6fb",
+      "name": "Basic LLM Chain",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash-lite",
+        "options": {
+          "maxOutputTokens": 2048
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        208,
+        -96
+      ],
+      "id": "be2efc60-d2d5-42c8-9ab2-c642e95c0bfd",
+      "name": "Google Gemini Chat Model",
+      "notesInFlow": false,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "Oq6R0syppCv04fWF",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "text"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        640,
+        160
+      ],
+      "id": "8d6da930-c615-4a3c-9ad4-2b2e37ccab34",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=\nRead the following canonical business information and Stage 1 research analysis:\n\nCanonical Business Name: {{ $('Loop Over Items').item.json.title }}\nCity: {{ $('Loop Over Items').item.json.city }}\nWebsite: {{ $('Loop Over Items').item.json.website || 'None' }}\nStage 1 Analysis:\n{{ Array.isArray($json.text) && $json.text[0] ? (typeof $json.text[0] === 'string' ? $json.text[0] : JSON.stringify($json.text[0])) : (typeof $json.text === 'string' && $json.text ? $json.text : 'Stage 1 analysis unavailable') }}\n\nExtract and analyze the business information.\n\nGenerate exactly these four fields:\n\n1. company_name: The actual business name.\n2. personalization_observation: One specific, verifiable observation about the company's website or public profile.\n3. potential_opportunity: One realistic digital improvement opportunity supported by the provided data.\n4. icebreaker: A short, personalized outreach opening written from the perspective of an independent web development and automation service provider contacting this business.\n\nRules:\n- Use only information present in the business data.\n- Do not invent website problems or missing features.\n- Do not speak as if you represent the target company.\n- Do not begin with \"Hello from [company name]\".\n- Address the business naturally.\n- Do not claim that an existing feature is missing.\n- Present opportunities as potential improvements, not confirmed problems.\n- Keep the icebreaker professional, natural, and concise.\n- Never return empty fields.\n- If a detail is unavailable, use another supported observation or opportunity.\n\nReturn valid JSON with exactly these four keys:\n{\n  \"company_name\": \"string\",\n  \"personalization_observation\": \"string\",\n  \"potential_opportunity\": \"string\",\n  \"icebreaker\": \"string\"\n}\n"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.5
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        832,
+        160
+      ],
+      "id": "53aac9de-664d-440c-bcf4-1f0c6afa6870",
+      "name": "Message a model",
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "62ofLS03GjmYAQvi",
+          "name": "Google Gemini(PaLM) Api account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const baseLead = $('Loop Over Items').item.json;\n\nfunction stripMarkdownJson(raw) {\n  if (!raw || typeof raw !== 'string') return '';\n  const trimmed = raw.trim();\n  const fenced = trimmed.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n  const firstBrace = fenced.indexOf('{');\n  const lastBrace = fenced.lastIndexOf('}');\n  if (firstBrace !== -1 && lastBrace > firstBrace) {\n    return fenced.slice(firstBrace, lastBrace + 1);\n  }\n  return fenced;\n}\n\nfunction parseStructuredOrTextJson(candidate) {\n  if (candidate === null || candidate === undefined) return null;\n  if (typeof candidate === 'string') {\n    const cleaned = stripMarkdownJson(candidate);\n    if (!cleaned) return null;\n    return JSON.parse(cleaned);\n  }\n  if (Array.isArray(candidate)) {\n    for (const elem of candidate) {\n      const parsed = parseStructuredOrTextJson(elem);\n      if (parsed && typeof parsed === 'object') return parsed;\n    }\n    return null;\n  }\n  if (typeof candidate === 'object') {\n    return candidate;\n  }\n  return null;\n}\n\n// 1. Parse Stage 1 AI output safely without throwing (supports text JSON and structured JSON)\nlet stage1Parsed = null;\nlet stage1Error = null;\ntry {\n  const stage1NodeJson = $('Basic LLM Chain').item?.json || {};\n  if (stage1NodeJson.error) {\n    stage1Error = typeof stage1NodeJson.error === 'string' ? stage1NodeJson.error : JSON.stringify(stage1NodeJson.error);\n  } else {\n    const stage1Candidate =\n      stage1NodeJson.output ??\n      stage1NodeJson.text ??\n      stage1NodeJson.response?.text ??\n      stage1NodeJson.response ??\n      (stage1NodeJson.business_summary !== undefined || stage1NodeJson.confidence !== undefined\n        ? stage1NodeJson\n        : null);\n    if (stage1Candidate !== null && stage1Candidate !== undefined && stage1Candidate !== '') {\n      const parsed = parseStructuredOrTextJson(stage1Candidate);\n      if (parsed && typeof parsed === 'object') {\n        stage1Parsed = parsed;\n      } else {\n        stage1Error = 'Stage 1 AI output is not a valid JSON object';\n      }\n    } else {\n      stage1Error = 'Stage 1 AI output missing';\n    }\n  }\n} catch (err) {\n  stage1Error = `Stage 1 JSON parse error: ${err.message}`;\n}\n\n// 2. Parse Stage 2 AI output safely without throwing (supports structured JSON object and text JSON)\nlet stage2Parsed = null;\nlet stage2Error = null;\ntry {\n  const s2 = $json || {};\n  if (s2.error) {\n    stage2Error = typeof s2.error === 'string' ? s2.error : JSON.stringify(s2.error);\n  } else {\n    const hasTopLevelStage2Fields =\n      typeof s2.company_name === 'string' ||\n      typeof s2.personalization_observation === 'string' ||\n      typeof s2.potential_opportunity === 'string' ||\n      typeof s2.icebreaker === 'string';\n\n    const part0 = s2.content?.parts?.[0] ?? s2.candidates?.[0]?.content?.parts?.[0] ?? null;\n    const partCandidate =\n      part0 && typeof part0 === 'object'\n        ? part0.text !== undefined\n          ? part0.text\n          : part0.json !== undefined\n            ? part0.json\n            : part0\n        : part0;\n\n    const stage2Candidate =\n      partCandidate ??\n      s2.output ??\n      s2.text ??\n      s2.response?.text ??\n      s2.response ??\n      s2.data ??\n      s2.message?.content ??\n      (hasTopLevelStage2Fields ? s2 : null);\n\n    if (stage2Candidate !== null && stage2Candidate !== undefined && stage2Candidate !== '') {\n      const candidate = parseStructuredOrTextJson(stage2Candidate);\n      if (candidate && typeof candidate === 'object') {\n        const requiredFields = [\n          'company_name',\n          'personalization_observation',\n          'potential_opportunity',\n          'icebreaker'\n        ];\n        const missing = requiredFields.filter(\n          (f) => typeof candidate[f] !== 'string' || !candidate[f].trim()\n        );\n        if (missing.length > 0) {\n          stage2Error = `Missing or empty Stage 2 AI fields: ${missing.join(', ')}`;\n        }\n        stage2Parsed = candidate;\n      } else {\n        stage2Error = 'Stage 2 Gemini response is not a valid JSON object';\n      }\n    } else {\n      stage2Error = 'Stage 2 Gemini response text missing';\n    }\n  }\n} catch (err) {\n  stage2Error = `Stage 2 JSON parse error: ${err.message}`;\n}\n\nconst CONFIDENCE_MAP = { low: 0.3, medium: 0.6, high: 0.9 };\nlet confidenceScore = null;\nif (stage1Parsed && stage1Parsed.confidence !== undefined && stage1Parsed.confidence !== null) {\n  const rawConf = String(stage1Parsed.confidence).trim().toLowerCase();\n  if (CONFIDENCE_MAP[rawConf] !== undefined) {\n    confidenceScore = CONFIDENCE_MAP[rawConf];\n  } else if (!Number.isNaN(Number(rawConf))) {\n    const num = Number(rawConf);\n    if (num >= 0 && num <= 1) confidenceScore = num;\n  }\n}\n\nconst businessSummary = stage1Parsed && typeof stage1Parsed.business_summary === 'string'\n  ? stage1Parsed.business_summary.trim()\n  : null;\nconst aiCompanyName = stage2Parsed && typeof stage2Parsed.company_name === 'string'\n  ? stage2Parsed.company_name.trim()\n  : null;\nconst personalizationObservation = stage2Parsed && typeof stage2Parsed.personalization_observation === 'string'\n  ? stage2Parsed.personalization_observation.trim()\n  : null;\nconst potentialOpportunity = stage2Parsed && typeof stage2Parsed.potential_opportunity === 'string'\n  ? stage2Parsed.potential_opportunity.trim()\n  : null;\nconst icebreaker = stage2Parsed && typeof stage2Parsed.icebreaker === 'string'\n  ? stage2Parsed.icebreaker.trim()\n  : null;\n\nconst hasValidAnalysis = Boolean(\n  businessSummary ||\n  personalizationObservation ||\n  potentialOpportunity ||\n  icebreaker ||\n  confidenceScore !== null\n);\n\nconst processingStatus = hasValidAnalysis && !stage2Error ? 'completed' : 'partial_ai_failure';\n\nconst analysisPayload = hasValidAnalysis\n  ? {\n      ai_company_name: aiCompanyName,\n      business_summary: businessSummary,\n      personalization_observation: personalizationObservation,\n      potential_opportunity: potentialOpportunity,\n      icebreaker,\n      confidence: confidenceScore,\n      stage1_analysis: stage1Parsed,\n      stage2_analysis: stage2Parsed,\n      error: stage1Error || stage2Error || null\n    }\n  : null;\n\nreturn {\n  json: {\n    // Canonical company_name ALWAYS comes from Apify title\n    company_name: baseLead.title,\n    title: baseLead.title,\n    place_id: baseLead.placeId || baseLead.place_id || null,\n    website: baseLead.website || null,\n    address: baseLead.address || null,\n    phone: baseLead.phone || null,\n    city: baseLead.city,\n    business_type: baseLead.business_type,\n    categories: baseLead.categories || [],\n    rating: baseLead.rating ?? null,\n    reviews_count: baseLead.reviews_count ?? null,\n    processing_status: processingStatus,\n    // Flat convenience fields for optional Google Sheets export\n    ai_company_name: aiCompanyName || '',\n    business_summary: businessSummary || '',\n    personalization_observation: personalizationObservation || '',\n    potential_opportunity: potentialOpportunity || '',\n    icebreaker: icebreaker || '',\n    confidence: confidenceScore,\n    // Structured analysis & full raw_payload for FastAPI callback\n    analysis: analysisPayload,\n    raw_payload: {\n      apify: baseLead.raw_apify,\n      stage1_ai: stage1Parsed || { error: stage1Error },\n      stage2_ai: stage2Parsed || { error: stage2Error },\n      ai_company_name: aiCompanyName,\n      processing_status: processingStatus\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        160
+      ],
+      "id": "733517dd-60a0-4b26-8e03-7e2aedf73045",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1f9xra5oTLrrT9tBmgso-EWs7694gHNnjPUjJRdfb_Uw",
+          "mode": "list",
+          "cachedResultName": "LeadForge",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1f9xra5oTLrrT9tBmgso-EWs7694gHNnjPUjJRdfb_Uw/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Feuille 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1f9xra5oTLrrT9tBmgso-EWs7694gHNnjPUjJRdfb_Uw/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "company_name",
+              "displayName": "company_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "city",
+              "displayName": "city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "business_type",
+              "displayName": "business_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "rating",
+              "displayName": "rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reviews_count",
+              "displayName": "reviews_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "personalization_observation",
+              "displayName": "personalization_observation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "potential_opportunity",
+              "displayName": "potential_opportunity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "icebreaker",
+              "displayName": "icebreaker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "processing_status",
+              "displayName": "processing_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1248,
+        368
+      ],
+      "id": "6a6e2b08-f8ea-4e7c-b085-63a20cdd2631",
+      "name": "Append row in sheet",
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "0j2SfKIvvTkdpBNc",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Restore the canonical lead item from Code in JavaScript1 before returning to Loop Over Items\n// so Google Sheets output metadata or optional export errors never corrupt the execution-local batch.\nreturn [\n  {\n    json: $('Code in JavaScript1').item.json\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        368
+      ],
+      "id": "a1b2c3d4-1111-4000-8000-000000000004",
+      "name": "Restore Lead Item for Loop"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Execution-isolated batch aggregation: reads only the items emitted by Loop Over Items (done branch)\n// for the current workflow execution context.\nconst trigger = $('Normalize Trigger Input').first().json;\nconst rawItems = $input.all();\n\nconst leads = [];\nfor (const item of rawItems) {\n  const data = item.json || {};\n  if (data._empty_batch) {\n    continue;\n  }\n  if (!data.company_name && !data.title) {\n    continue;\n  }\n  leads.push({\n    company_name: data.company_name || data.title,\n    title: data.title || data.company_name,\n    place_id: data.place_id || data.placeId || null,\n    website: data.website || null,\n    address: data.address || null,\n    phone: data.phone || null,\n    city: data.city || trigger.city,\n    business_type: data.business_type || trigger.business_type,\n    categories: data.categories || [],\n    rating: data.rating ?? null,\n    reviews_count: data.reviews_count ?? null,\n    processing_status: data.processing_status || 'completed',\n    analysis: data.analysis || null,\n    raw_payload: data.raw_payload || {\n      apify: data.raw_apify || {},\n      stage1_ai: null,\n      stage2_ai: null\n    }\n  });\n}\n\nreturn [\n  {\n    json: {\n      callback_url: trigger.callback_url,\n      payload: {\n        search_run_id: trigger.search_run_id,\n        execution_id: trigger.execution_id,\n        status: 'completed',\n        leads\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        -128
+      ],
+      "id": "a1b2c3d4-1111-4000-8000-000000000005",
+      "name": "Build Batch Callback Payload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Callback-Secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        160,
+        -128
+      ],
+      "id": "a1b2c3d4-1111-4000-8000-000000000006",
+      "name": "Send FastAPI Callback",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Trigger Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Trigger Input": {
+      "main": [
+        [
+          {
+            "node": "IF - Is Controlled Test Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Is Controlled Test Mode": {
+      "main": [
+        [
+          {
+            "node": "Build Controlled Test Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Controlled Test Lead": {
+      "main": [
+        [
+          {
+            "node": "Build Batch Callback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "IF - Has Discovered Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Has Discovered Businesses": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Batch Callback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Build Batch Callback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Has Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Has Website": {
+      "main": [
+        [
+          {
+            "node": "scraper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare - No Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "scraper": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare - No Website": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Restore Lead Item for Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Lead Item for Loop": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Batch Callback Payload": {
+      "main": [
+        [
+          {
+            "node": "Send FastAPI Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "leadforge-v2-fastapi-phase4",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "696269a43896447dd212ce8808d5f5416030d96a47242632ae7e3e476796e4d6"
+  },
+  "nodeGroups": [],
+  "id": "gYe8wqAixabDlcwJ-fastapi-v2",
+  "tags": []
+}

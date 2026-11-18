@@ -1,0 +1,609 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Generating potential customers",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "city"
+            },
+            {
+              "fieldLabel": "store type"
+            },
+            {
+              "fieldLabel": "business_type"
+            },
+            {
+              "fieldLabel": "max_results",
+              "fieldType": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -1296,
+        160
+      ],
+      "id": "f267f2c8-3f5a-4598-b485-e38d99861f90",
+      "name": "On form submission",
+      "webhookId": "73b92b60-c47a-4a82-80fe-dea70bcb3c05"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/compass~google-maps-extractor/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  includeWebResults: false,\n  language: \"en\",\n  locationQuery: $json.city,\n  maxCrawledPlacesPerSearch: Number($json.max_results || 5),\n  maximumLeadsEnrichmentRecords: 0,\n  scrapeContacts: false,\n  scrapeDirectories: false,\n  scrapePlaceDetailPage: false,\n  scrapeSocialMediaProfiles: {\n    facebooks: false,\n    instagrams: false,\n    tiktoks: false,\n    twitters: false,\n    youtubes: false\n  },\n  scrapeTableReservationProvider: false,\n  searchStringsArray: [$json.business_type || $json[\"store type\"]],\n  skipClosedPlaces: false\n}) }}",
+        "options": {
+          "redirect": {
+            "redirect": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1088,
+        160
+      ],
+      "id": "0eade18e-f8cf-4200-9912-8b5054133705",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pVNByJcoQNs66qd2",
+          "name": "Header Auth account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d9867d3c-9e82-404d-b3fb-477fc20d8c8f",
+              "name": "title",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "a5c02ad6-32bd-4d64-babb-1a3c28497321",
+              "name": "categories",
+              "value": "={{ $json.categories }}",
+              "type": "array"
+            },
+            {
+              "id": "6e554558-417a-4685-bca4-1407aa831fac",
+              "name": "city",
+              "value": "={{ $json.city }}",
+              "type": "string"
+            },
+            {
+              "id": "8f6b2d37-043e-4d43-9c3b-a618cddf6560",
+              "name": "website",
+              "value": "={{ $json.website }}",
+              "type": "string"
+            },
+            {
+              "id": "c36cc9c3-43d6-4613-8750-a7e8601463df",
+              "name": "placeId",
+              "value": "={{ $json.placeId }}",
+              "type": "string"
+            },
+            {
+              "id": "f039846c-df76-4e3d-8cbd-1567eec08388",
+              "name": "address",
+              "value": "={{ $json.address }}",
+              "type": "string"
+            },
+            {
+              "id": "013c0f5a-d986-4726-aaea-f6ddb35f8279",
+              "name": "phone",
+              "value": "={{ $json.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "7aeaca03-9366-4ddf-8e16-657425f1adda",
+              "name": "reviewsCount",
+              "value": "={{ $json.reviewsCount }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -880,
+        160
+      ],
+      "id": "9cc4c4fc-36ba-4a06-bb3b-e7c3ba6f6f5e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -400,
+        160
+      ],
+      "id": "513dfd56-21f0-4ab0-918b-c0be35f00149",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst seen = new Set();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n\n  // Skip records without a business name.\n  if (!data.title || !String(data.title).trim()) {\n    continue;\n  }\n\n  // Prefer Google Maps place ID for deduplication.\n  const key = data.place_id\n    ? String(data.place_id).trim().toLowerCase()\n    : `${String(data.title).trim().toLowerCase()}|${String(data.address || '').trim().toLowerCase()}`;\n\n  if (seen.has(key)) {\n    continue;\n  }\n\n  seen.add(key);\n\n  results.push({\n    json: {\n      ...data,\n      website: data.website || '',\n      phone: data.phone || '',\n      address: data.address || '',\n      rating: Number(data.rating || 0),\n      reviews_count: Number(data.reviews_count || 0),\n    }\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        160
+      ],
+      "id": "47b7a032-01f8-41c4-8d96-6c881683a996",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.website }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "website_content"
+            }
+          },
+          "timeout": 30004
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        80,
+        96
+      ],
+      "id": "bf457078-7ad2-4a72-8b0c-04ee62add6e4",
+      "name": "scraper"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=\nYou are a business research analyst working for LeadForge.\n\nAnalyze the business using only the information provided below.\nDo not invent facts. If information is unavailable, return null.\n\nBUSINESS INFORMATION:\nName: {{ $json.title || \"Unknown\" }}\nCategory: {{ JSON.stringify($json.categories || $json.category || []) }}\nCity: {{ $json.city || \"Unknown\" }}\nAddress: {{ $json.address || \"Unknown\" }}\nWebsite: {{ $json.website || \"No website\" }}\nPhone: {{ $json.phone || \"Unknown\" }}\nGoogle Rating: {{ $json.totalScore ?? $json.rating ?? null }}\nReviews Count: {{ $json.reviewsCount ?? $json.reviews_count ?? 0 }}\n\nWEBSITE CONTENT:\n{{ $json.website_content || $json.data || \"No website content available\" }}\n\nAnalyze the business and return ONLY valid JSON using this structure:\n\n{\n  \"business_summary\": \"Brief factual description\",\n  \"services\": [],\n  \"website_status\": \"active | missing | inaccessible\",\n  \"website_observations\": [],\n  \"potential_digital_needs\": [],\n  \"opportunity_reasons\": [],\n  \"evidence\": [],\n  \"confidence\": \"low | medium | high\"\n}\n\nRules:\n- Do not assume that a missing website means the business needs one.\n- Distinguish observed facts from possible opportunities.\n- Do not invent website problems.\n- Keep the analysis concise and evidence-based.\n",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": []
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        256,
+        160
+      ],
+      "id": "1d0247f1-4bac-4299-b337-517f4805d6fb",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash-lite",
+        "options": {
+          "maxOutputTokens": 2048
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        160,
+        -112
+      ],
+      "id": "be2efc60-d2d5-42c8-9ab2-c642e95c0bfd",
+      "name": "Google Gemini Chat Model",
+      "notesInFlow": false,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "Oq6R0syppCv04fWF",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "text"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        640,
+        160
+      ],
+      "id": "8d6da930-c615-4a3c-9ad4-2b2e37ccab34",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=\nRead the following business information:\n\n{{ $json.text[0] }}\n\nExtract and analyze the business information.\n\nGenerate exactly these four fields:\n\n1. company_name: The actual business name.\n2. personalization_observation: One specific, verifiable observation about the company's website.\n3. potential_opportunity: One realistic digital improvement opportunity supported by the provided data.\n4. icebreaker: A short, personalized outreach opening written from the perspective of an independent web development and automation service provider contacting this business.\n\nRules:\n- Use only information present in the business data.\n- Do not invent website problems or missing features.\n- Do not speak as if you represent the target company.\n- Do not begin with \"Hello from [company name]\".\n- Address the business naturally.\n- Do not claim that an existing feature is missing.\n- Present opportunities as potential improvements, not confirmed problems.\n- Keep the icebreaker professional, natural, and concise.\n- Never return empty fields.\n- If a detail is unavailable, use another supported observation or opportunity.\n\nReturn valid JSON with exactly these four keys:\n{\n  \"company_name\": \"string\",\n  \"personalization_observation\": \"string\",\n  \"potential_opportunity\": \"string\",\n  \"icebreaker\": \"string\"\n}\n"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.5
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        832,
+        192
+      ],
+      "id": "53aac9de-664d-440c-bcf4-1f0c6afa6870",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "62ofLS03GjmYAQvi",
+          "name": "Google Gemini(PaLM) Api account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1f9xra5oTLrrT9tBmgso-EWs7694gHNnjPUjJRdfb_Uw",
+          "mode": "list",
+          "cachedResultName": "LeadForge",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1f9xra5oTLrrT9tBmgso-EWs7694gHNnjPUjJRdfb_Uw/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Feuille 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1f9xra5oTLrrT9tBmgso-EWs7694gHNnjPUjJRdfb_Uw/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "content",
+              "displayName": "content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "finishReason",
+              "displayName": "finishReason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "index",
+              "displayName": "index",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1232,
+        512
+      ],
+      "id": "6a6e2b08-f8ea-4e7c-b085-63a20cdd2631",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "0j2SfKIvvTkdpBNc",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "df338763-1883-48f6-b1b9-175ea5542aea",
+              "leftValue": "={{ $json.website }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -176,
+        160
+      ],
+      "id": "bbfcfb14-6325-478e-8cc2-3e930f4e56b3",
+      "name": "IF - Has Website"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9df66f64-bacb-4366-a27f-0abc937b13cd",
+              "name": "website_content",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        48,
+        256
+      ],
+      "id": "bf35dee6-c198-4bab-9578-dce41f786aa4",
+      "name": "Prepare - No Website"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst rawText = $json.content?.parts?.[0]?.text;\n\nif (!rawText) {\n  throw new Error(\"Gemini response text is missing.\");\n}\n\nlet result;\n\ntry {\n  result = JSON.parse(\n    rawText\n      .replace(/^```json\\s*/i, \"\")\n      .replace(/\\s*```$/, \"\")\n      .trim()\n  );\n} catch (error) {\n  throw new Error(\n    `Failed to parse Gemini JSON: ${error.message}`\n  );\n}\n\nconst requiredFields = [\n  \"company_name\",\n  \"personalization_observation\",\n  \"potential_opportunity\",\n  \"icebreaker\"\n];\n\nfor (const field of requiredFields) {\n  if (\n    typeof result[field] !== \"string\" ||\n    !result[field].trim()\n  ) {\n    throw new Error(`Missing or empty AI field: ${field}`);\n  }\n}\n\nreturn {\n  json: {\n    company_name: result.company_name,\n    personalization_observation: result.personalization_observation,\n    potential_opportunity: result.potential_opportunity,\n    icebreaker: result.icebreaker,\n    processing_status: \"completed\"\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        -80
+      ],
+      "id": "733517dd-60a0-4b26-8e03-7e2aedf73045",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "IF - Has Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "scraper": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Has Website": {
+      "main": [
+        [
+          {
+            "node": "scraper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare - No Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare - No Website": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "938796cf-7e25-4e3d-94ca-7bb0106955ce",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "696269a43896447dd212ce8808d5f5416030d96a47242632ae7e3e476796e4d6"
+  },
+  "nodeGroups": [],
+  "id": "gYe8wqAixabDlcwJ",
+  "tags": []
+}

@@ -1,0 +1,6 @@
+{
+  "name": "LeadForge",
+  "description": "Business discovery and deterministic lead qualification platform powered by FastAPI, SQLite, n8n, Apify, and configurable AI analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
