@@ -52,6 +52,22 @@ class SearchRunSummaryResponse(BaseModel):
     leads_count: int = Field(default=0, ge=0)
 
 
+class SearchRunPipelineStatusResponse(BaseModel):
+    """Detailed pipeline execution stage and error diagnostic response for a SearchRun."""
+
+    id: int
+    status: SearchRunStatus
+    pipeline_stage: str
+    attempt_count: int = Field(default=0, ge=0)
+    leads_count: int = Field(default=0, ge=0)
+    max_results: int = Field(default=20, ge=1)
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    worker_id: Optional[str] = None
+
+
 class SearchRunDetailResponse(SearchRunSummaryResponse):
     """Detailed response schema for a single SearchRun including its discovered leads."""
 

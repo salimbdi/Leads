@@ -110,9 +110,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <ol className="space-y-1.5 text-xs text-slate-500">
             <li>01. Launch a niche & city search</li>
-            <li>02. Monitor n8n batch execution</li>
+            <li>02. Monitor Python worker pipeline stages</li>
             <li>03. Sort leads by deterministic score</li>
-            <li>04. Inspect 5-dimension breakdown</li>
+            <li>04. Inspect commercial service fit</li>
             <li>05. Review AI evidence & outreach</li>
           </ol>
         </div>

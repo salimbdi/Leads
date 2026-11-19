@@ -27,6 +27,7 @@ import {
   LeadQueryFilters,
   LeadSummaryResponse,
   SearchRunCreateRequest,
+  SearchRunPipelineStatusResponse,
   SearchRunStatus,
   SearchRunSummaryResponse,
 } from './types/leadforge';
@@ -36,15 +37,17 @@ import {
   fetchLeadDetailApi,
   fetchLeadsApi,
   fetchSearchRunsApi,
+  fetchSearchRunsPipelineStatusApi,
+  fetchWithProxyFallback,
   triggerSearchRunApi,
 } from './services/leadforgeApi';
 
 const DEFAULT_ARCHITECTURE_FLOW: ArchitectureStep[] = [
   { step: 1, component: 'React Dashboard', role: 'Search & lead qualification UI', status: 'active' },
   { step: 2, component: 'FastAPI Backend', role: 'REST API, validation & deterministic scoring', status: 'active' },
-  { step: 3, component: 'n8n Webhook', role: 'Workflow orchestration trigger', status: 'active' },
-  { step: 4, component: 'Apify + AI Analysis', role: 'Business discovery & structured evidence extraction', status: 'active' },
-  { step: 5, component: 'FastAPI Callback', role: 'Idempotent ingestion & deterministic lead scoring', status: 'active' },
+  { step: 3, component: 'Python Durable Worker', role: 'SQLite-backed asynchronous job claim & execution', status: 'active' },
+  { step: 4, component: 'Apify + Gemini AI', role: 'Business discovery & 2-stage commercial qualification', status: 'active' },
+  { step: 5, component: 'Incremental Persistence', role: 'Idempotent ingestion & deterministic lead scoring', status: 'active' },
   { step: 6, component: 'SQLite + SQLAlchemy', role: 'Single source of truth persistence', status: 'active' },
 ];
 
@@ -80,6 +83,9 @@ export default function App() {
 
   // Search Runs state
   const [searchRuns, setSearchRuns] = useState<SearchRunSummaryResponse[]>([]);
+  const [pipelineStatusMap, setPipelineStatusMap] = useState<
+    Record<number, SearchRunPipelineStatusResponse>
+  >({});
   const [totalSearchRuns, setTotalSearchRuns] = useState<number>(0);
   const [runStatusFilter, setRunStatusFilter] = useState<'all' | SearchRunStatus>('all');
   const [isLoadingRuns, setIsLoadingRuns] = useState<boolean>(false);
@@ -107,7 +113,7 @@ export default function App() {
       const startTime = performance.now();
 
       try {
-        const response = await fetch(endpoint, {
+        const response = await fetchWithProxyFallback(endpoint, {
           headers: { Accept: 'application/json' },
         });
         const latencyMs = Math.max(1, Math.round(performance.now() - startTime));
@@ -159,13 +165,21 @@ export default function App() {
     setIsLoadingRuns(true);
     setRunsError(null);
     try {
-      const data = await fetchSearchRunsApi({
-        limit: 15,
-        offset: 0,
-        status: runStatusFilter,
-      });
+      const [data, pipelineStatuses] = await Promise.all([
+        fetchSearchRunsApi({
+          limit: 15,
+          offset: 0,
+          status: runStatusFilter,
+        }),
+        fetchSearchRunsPipelineStatusApi(25).catch(() => []),
+      ]);
       setSearchRuns(data.items);
       setTotalSearchRuns(data.total);
+      const statusLookup: Record<number, SearchRunPipelineStatusResponse> = {};
+      for (const item of pipelineStatuses) {
+        statusLookup[item.id] = item;
+      }
+      setPipelineStatusMap(statusLookup);
     } catch (err: unknown) {
       setRunsError(
         err instanceof Error ? err.message : 'Unable to load search runs.'
@@ -199,7 +213,7 @@ export default function App() {
   useEffect(() => {
     runHealthCheck('/api/health');
 
-    fetch('/api/v1/foundation')
+    fetchWithProxyFallback('/api/v1/foundation')
       .then((res) => (res.ok ? res.json() : null))
       .then((data: FoundationStatusResponse | null) => {
         if (data?.architecture_flow) {
@@ -226,18 +240,18 @@ export default function App() {
     loadLeads();
   }, [loadLeads]);
 
-  // Poll search runs and overview every 5s when at least one search run is currently running
+  // Poll search runs, pipeline stages, and leads every 2.5s whenever any search run is pending or running
   useEffect(() => {
-    const hasRunning =
+    const hasActivePipeline =
       (overviewMetrics?.runningSearchRuns ?? 0) > 0 ||
-      searchRuns.some((r) => r.status === 'running');
-    if (!hasRunning) return;
+      searchRuns.some((r) => r.status === 'running' || r.status === 'pending');
+    if (!hasActivePipeline) return;
 
     const timer = window.setInterval(() => {
       loadOverviewMetrics();
       loadSearchRuns();
       loadLeads();
-    }, 5000);
+    }, 2500);
 
     return () => window.clearInterval(timer);
   }, [overviewMetrics?.runningSearchRuns, searchRuns, loadOverviewMetrics, loadSearchRuns, loadLeads]);
@@ -311,6 +325,18 @@ export default function App() {
   const isWorkspaceBusy =
     isCheckingHealth || isLoadingOverview || isLoadingRuns || isLoadingLeads;
 
+  const trackedRunForPipeline =
+    (leadFilters.searchRunId
+      ? searchRuns.find((r) => r.id === leadFilters.searchRunId)
+      : null) ||
+    searchRuns.find((r) => r.status === 'running' || r.status === 'pending') ||
+    searchRuns[0] ||
+    null;
+
+  const trackedPipelineStatus = trackedRunForPipeline
+    ? pipelineStatusMap[trackedRunForPipeline.id] ?? null
+    : null;
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       <TopNav
@@ -342,7 +368,7 @@ export default function App() {
                   Business Discovery & Qualification Workspace
                 </h1>
                 <p className="mt-1 text-sm text-slate-600">
-                  Launch local business searches, monitor n8n discovery runs, and prioritize prospects using deterministic 0–100 scoring and AI qualitative evidence.
+                  Launch local business searches through the Python durable worker (Apify + Gemini), monitor real-time pipeline stages, and qualify high-value prospects for custom software, AI, and automation services.
                 </p>
               </div>
 
@@ -356,6 +382,8 @@ export default function App() {
               <SearchCreationPanel
                 onSubmitSearch={handleCreateSearchRun}
                 isSubmitting={isSubmittingSearch}
+                trackedRun={trackedRunForPipeline}
+                trackedPipelineStatus={trackedPipelineStatus}
               />
 
               <SearchHistoryPanel
@@ -375,6 +403,7 @@ export default function App() {
                 onSelectSearchRunFilter={(runId) =>
                   handleUpdateLeadFilters({ searchRunId: runId, offset: 0 })
                 }
+                pipelineStatusMap={pipelineStatusMap}
               />
 
               <LeadsTablePanel

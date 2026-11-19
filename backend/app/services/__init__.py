@@ -1,5 +1,5 @@
-from backend.app.services.lead_service import get_lead_detail, list_leads
 from backend.app.services.n8n_service import (
+    StaleTaskAttemptError,
     build_preserved_raw_payload,
     find_existing_lead_for_dedup,
     normalize_text_key,
@@ -7,11 +7,55 @@ from backend.app.services.n8n_service import (
     process_n8n_callback,
     trigger_n8n_search_run,
 )
+from backend.app.services.apify_service import (
+    build_apify_google_maps_input,
+    discover_businesses,
+    normalize_and_deduplicate_apify_items,
+    scrape_website_content,
+)
+from backend.app.services.discovery_orchestrator import (
+    DiscoveryPipelineResult,
+    execute_discovery_pipeline,
+    generate_controlled_test_lead,
+)
+from backend.app.services.gemini_service import (
+    analyze_lead_with_gemini,
+    build_stage1_prompt,
+    build_stage2_prompt,
+    call_gemini_api,
+    parse_structured_or_text_json,
+    strip_markdown_json,
+)
+from backend.app.services.lead_service import get_lead_detail, list_leads
+from backend.app.services.scoring_service import (
+    apply_lead_scoring,
+    calculate_lead_score,
+    score_lead_model,
+)
 from backend.app.services.search_run_service import (
     create_search_run,
     dispatch_existing_search_run,
     get_search_run_detail,
     list_search_runs,
+)
+from backend.app.services.worker_service import (
+    DurableBackgroundWorker,
+    DurableTaskSnapshot,
+    claim_next_pending_task,
+    claim_search_run_task,
+    drain_pending_tasks,
+    enqueue_search_run_task,
+    execute_claimed_task,
+    generate_worker_id,
+    get_background_worker,
+    get_task_snapshot,
+    is_permanent_task_error,
+    process_next_pending_task,
+    recover_interrupted_tasks,
+    renew_task_lease,
+    sanitize_error_message,
+    start_background_worker,
+    stop_background_worker,
 )
 
 __all__ = [
@@ -23,8 +67,43 @@ __all__ = [
     "get_lead_detail",
     "trigger_n8n_search_run",
     "process_n8n_callback",
+    "StaleTaskAttemptError",
     "normalize_website_key",
     "normalize_text_key",
     "build_preserved_raw_payload",
     "find_existing_lead_for_dedup",
+    "build_apify_google_maps_input",
+    "normalize_and_deduplicate_apify_items",
+    "discover_businesses",
+    "scrape_website_content",
+    "build_stage1_prompt",
+    "build_stage2_prompt",
+    "call_gemini_api",
+    "parse_structured_or_text_json",
+    "strip_markdown_json",
+    "analyze_lead_with_gemini",
+    "execute_discovery_pipeline",
+    "generate_controlled_test_lead",
+    "DiscoveryPipelineResult",
+    "calculate_lead_score",
+    "score_lead_model",
+    "apply_lead_scoring",
+    "DurableBackgroundWorker",
+    "DurableTaskSnapshot",
+    "generate_worker_id",
+    "is_permanent_task_error",
+    "renew_task_lease",
+    "sanitize_error_message",
+    "get_task_snapshot",
+    "enqueue_search_run_task",
+    "claim_search_run_task",
+    "claim_next_pending_task",
+    "recover_interrupted_tasks",
+    "execute_claimed_task",
+    "process_next_pending_task",
+    "drain_pending_tasks",
+    "get_background_worker",
+    "start_background_worker",
+    "stop_background_worker",
 ]
+

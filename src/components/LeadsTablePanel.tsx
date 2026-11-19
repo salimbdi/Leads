@@ -15,6 +15,7 @@ import {
   LeadSummaryResponse,
 } from '../types/leadforge';
 import {
+  buildCommercialQualification,
   formatWebsiteDisplayHost,
   getPrioritySemanticClass,
   normalizeExternalWebsiteUrl,
@@ -339,6 +340,8 @@ export const LeadsTablePanel: React.FC<LeadsTablePanelProps> = ({
                 const websiteLabel = formatWebsiteDisplayHost(lead.website);
                 const isSelected = selectedLeadId === lead.id;
                 const isHighPriority = lead.priority === 'High';
+                const qualification = buildCommercialQualification(lead);
+                const topServices = qualification.recommendedServices.slice(0, 3);
 
                 return (
                   <tr
@@ -355,8 +358,23 @@ export const LeadsTablePanel: React.FC<LeadsTablePanelProps> = ({
                     <td className="py-3 px-4">
                       <div className="font-semibold text-slate-900">{lead.company_name}</div>
                       {lead.analysis?.potential_opportunity && (
-                        <div className="mt-0.5 text-[11px] text-slate-500 truncate max-w-xs">
+                        <div className="mt-0.5 text-[11px] text-slate-600 line-clamp-1 max-w-md">
                           {lead.analysis.potential_opportunity}
+                        </div>
+                      )}
+                      {topServices.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            Service fit:
+                          </span>
+                          {topServices.map((rec) => (
+                            <span
+                              key={rec.service}
+                              className="px-1.5 py-0.5 text-[10px] font-medium text-slate-700 bg-slate-100 border border-slate-200 rounded"
+                            >
+                              {rec.service}
+                            </span>
+                          ))}
                         </div>
                       )}
                     </td>

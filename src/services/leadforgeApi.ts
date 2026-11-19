@@ -6,10 +6,63 @@ import {
   PaginatedSearchRunsResponse,
   SearchRunCreateRequest,
   SearchRunDetailResponse,
+  SearchRunPipelineStatusResponse,
   SearchRunStatus,
   SearchRunSummaryResponse,
 } from '../types/leadforge';
-import { buildLeadsQueryString } from '../utils/leadforgeLogic';
+import { buildLeadsQueryString, resolveApiUrl } from '../utils/leadforgeLogic';
+
+// Sticky flag: once direct calls are detected as blocked or if running in the preview gateway environment,
+// route all API requests consistently through the Express gateway proxy without repeating failed direct attempts.
+let directCallBlocked = false;
+
+export function isDirectCallBlocked(): boolean {
+  return directCallBlocked;
+}
+
+export function setDirectCallBlocked(blocked: boolean): void {
+  directCallBlocked = blocked;
+}
+
+export function getApiBaseUrl(): string {
+  if (directCallBlocked) {
+    return '';
+  }
+  if (import.meta.env.VITE_USE_REMOTE_API !== 'true') {
+    return '';
+  }
+  const envUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+  if (envUrl) {
+    return envUrl.replace(/\/+$/, '');
+  }
+  return '';
+}
+
+export function apiUrl(path: string): string {
+  return resolveApiUrl(path, getApiBaseUrl());
+}
+
+export async function fetchWithProxyFallback(urlPath: string, init?: RequestInit): Promise<Response> {
+  const targetUrl = apiUrl(urlPath);
+  const isDirectRemote = targetUrl.startsWith('http://') || targetUrl.startsWith('https://');
+
+  if (!isDirectRemote) {
+    return await fetch(targetUrl, init);
+  }
+
+  try {
+    return await fetch(targetUrl, init);
+  } catch (err: unknown) {
+    directCallBlocked = true;
+    console.warn(
+      `[LeadForge] Direct fetch to ${targetUrl} failed (${
+        err instanceof Error ? err.message : String(err)
+      }). Switching to Express gateway proxy path for all requests.`
+    );
+    const gatewayUrl = resolveApiUrl(urlPath, '');
+    return await fetch(gatewayUrl, init);
+  }
+}
 
 async function parseJsonOrThrow<T>(response: Response, fallbackMessage: string): Promise<T> {
   if (!response.ok) {
@@ -44,12 +97,12 @@ export async function fetchDashboardOverviewMetrics(): Promise<DashboardMetricsS
     allRunsRes,
     runningRunsRes,
   ] = await Promise.all([
-    fetch('/api/v1/leads?limit=1', { headers: { Accept: 'application/json' } }),
-    fetch('/api/v1/leads?limit=1&priority=High', { headers: { Accept: 'application/json' } }),
-    fetch('/api/v1/leads?limit=1&priority=Medium', { headers: { Accept: 'application/json' } }),
-    fetch('/api/v1/leads?limit=1&priority=Low', { headers: { Accept: 'application/json' } }),
-    fetch('/api/v1/search-runs?limit=1', { headers: { Accept: 'application/json' } }),
-    fetch('/api/v1/search-runs?limit=1&status=running', { headers: { Accept: 'application/json' } }),
+    fetchWithProxyFallback('/api/v1/leads?limit=1', { headers: { Accept: 'application/json' } }),
+    fetchWithProxyFallback('/api/v1/leads?limit=1&priority=High', { headers: { Accept: 'application/json' } }),
+    fetchWithProxyFallback('/api/v1/leads?limit=1&priority=Medium', { headers: { Accept: 'application/json' } }),
+    fetchWithProxyFallback('/api/v1/leads?limit=1&priority=Low', { headers: { Accept: 'application/json' } }),
+    fetchWithProxyFallback('/api/v1/search-runs?limit=1', { headers: { Accept: 'application/json' } }),
+    fetchWithProxyFallback('/api/v1/search-runs?limit=1&status=running', { headers: { Accept: 'application/json' } }),
   ]);
 
   const [allLeads, highLeads, mediumLeads, lowLeads, allRuns, runningRuns] = await Promise.all([
@@ -74,7 +127,7 @@ export async function fetchDashboardOverviewMetrics(): Promise<DashboardMetricsS
 export async function createSearchRunApi(
   payload: SearchRunCreateRequest
 ): Promise<SearchRunSummaryResponse> {
-  const response = await fetch('/api/v1/search-runs', {
+  const response = await fetchWithProxyFallback('/api/v1/search-runs', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -91,7 +144,7 @@ export async function createSearchRunApi(
 export async function triggerSearchRunApi(
   searchRunId: number
 ): Promise<SearchRunSummaryResponse> {
-  const response = await fetch(`/api/v1/search-runs/${searchRunId}/trigger`, {
+  const response = await fetchWithProxyFallback(`/api/v1/search-runs/${searchRunId}/trigger`, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -123,7 +176,7 @@ export async function fetchSearchRunsApi(params: {
     query.set('business_type', params.businessType.trim());
   }
 
-  const response = await fetch(`/api/v1/search-runs?${query.toString()}`, {
+  const response = await fetchWithProxyFallback(`/api/v1/search-runs?${query.toString()}`, {
     headers: { Accept: 'application/json' },
   });
   return parseJsonOrThrow<PaginatedSearchRunsResponse>(
@@ -135,7 +188,7 @@ export async function fetchSearchRunsApi(params: {
 export async function fetchSearchRunDetailApi(
   searchRunId: number
 ): Promise<SearchRunDetailResponse> {
-  const response = await fetch(`/api/v1/search-runs/${searchRunId}`, {
+  const response = await fetchWithProxyFallback(`/api/v1/search-runs/${searchRunId}`, {
     headers: { Accept: 'application/json' },
   });
   return parseJsonOrThrow<SearchRunDetailResponse>(
@@ -144,11 +197,26 @@ export async function fetchSearchRunDetailApi(
   );
 }
 
+export async function fetchSearchRunsPipelineStatusApi(
+  limit = 20
+): Promise<SearchRunPipelineStatusResponse[]> {
+  const response = await fetchWithProxyFallback(
+    `/api/v1/search-runs/pipeline-status?limit=${limit}`,
+    {
+      headers: { Accept: 'application/json' },
+    }
+  );
+  return parseJsonOrThrow<SearchRunPipelineStatusResponse[]>(
+    response,
+    'Unable to load search run pipeline statuses'
+  );
+}
+
 export async function fetchLeadsApi(
   filters: LeadQueryFilters
 ): Promise<PaginatedLeadsResponse> {
   const qs = buildLeadsQueryString(filters);
-  const response = await fetch(`/api/v1/leads?${qs}`, {
+  const response = await fetchWithProxyFallback(`/api/v1/leads?${qs}`, {
     headers: { Accept: 'application/json' },
   });
   return parseJsonOrThrow<PaginatedLeadsResponse>(
@@ -158,7 +226,7 @@ export async function fetchLeadsApi(
 }
 
 export async function fetchLeadDetailApi(leadId: number): Promise<LeadDetailResponse> {
-  const response = await fetch(`/api/v1/leads/${leadId}`, {
+  const response = await fetchWithProxyFallback(`/api/v1/leads/${leadId}`, {
     headers: { Accept: 'application/json' },
   });
   return parseJsonOrThrow<LeadDetailResponse>(

@@ -64,6 +64,8 @@ def n8n_client(
     monkeypatch.setenv("N8N_WEBHOOK_URL", "")
     monkeypatch.setenv("BACKEND_PUBLIC_URL", "")
     monkeypatch.setenv("DEPLOYMENT_MODE", "local")
+    monkeypatch.setenv("DISCOVERY_EXECUTION_MODE", "n8n")
+    monkeypatch.setenv("WORKER_ENABLED", "false")
     get_settings.cache_clear()
 
     def override_get_db() -> Generator[Session, None, None]:
@@ -1172,12 +1174,14 @@ for (const loopbackUrl of [
   );
 }
 
-// Env fallback resolution works when BACKEND_PUBLIC_URL is a valid non-loopback URL
-const normFromEnv = callNormalize(
-  { search_run_id: 15, city: 'Miami', business_type: 'Med Spa' },
-  { BACKEND_PUBLIC_URL: 'https://tunnel.example.com/' }
-);
-assert.equal(normFromEnv.callback_url, 'https://tunnel.example.com/api/v1/integrations/n8n/callback');
+// Callback resolution works when callback_url is provided in the payload
+const normFromPayload = callNormalize({
+  search_run_id: 15,
+  city: 'Miami',
+  business_type: 'Med Spa',
+  callback_url: 'https://tunnel.example.com/api/v1/integrations/n8n/callback'
+});
+assert.equal(normFromPayload.callback_url, 'https://tunnel.example.com/api/v1/integrations/n8n/callback');
 
 // Correction 7: Failed Apify request throws explicit error in Code in JavaScript
 for (const apifyErrorItem of [

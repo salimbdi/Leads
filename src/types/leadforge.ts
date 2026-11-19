@@ -103,6 +103,61 @@ export interface PaginatedSearchRunsResponse {
   items: SearchRunSummaryResponse[];
 }
 
+export type PipelineStageKey =
+  | 'search_submitted'
+  | 'waiting_in_queue'
+  | 'discovering_businesses'
+  | 'analyzing_businesses'
+  | 'saving_results'
+  | 'completed'
+  | 'failed';
+
+export interface SearchRunPipelineStatusResponse {
+  id: number;
+  status: SearchRunStatus;
+  pipeline_stage: PipelineStageKey;
+  attempt_count: number;
+  leads_count: number;
+  max_results: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  last_error: string | null;
+  worker_id: string | null;
+}
+
+export type PipelineStepVisualState = 'done' | 'active' | 'pending' | 'failed';
+
+export interface PipelineStageStep {
+  key: string;
+  label: string;
+  state: PipelineStepVisualState;
+  detail: string;
+}
+
+export type ServiceOfferingName =
+  | 'Custom web applications'
+  | 'Mobile applications'
+  | 'Business management systems'
+  | 'AI integrations and automation'
+  | 'n8n automation systems';
+
+export interface ServiceFitRecommendation {
+  service: ServiceOfferingName;
+  fitLevel: 'Strong Fit' | 'Moderate Fit';
+  rationale: string;
+  evidenceSignal: string;
+}
+
+export interface CommercialQualificationSummary {
+  whyGoodProspect: string;
+  operationalComplexity: string;
+  digitalSystemsAssessment: string;
+  recommendedServices: ServiceFitRecommendation[];
+  supportingEvidence: string[];
+  extractedServicesOffered: string[];
+}
+
 export interface DashboardMetricsSummary {
   totalLeads: number;
   highPriorityLeads: number;

@@ -304,12 +304,26 @@ def trigger_n8n_search_run(db: Session, search_run: SearchRun) -> SearchRun:
 
 
 
-def process_n8n_callback(db: Session, payload: N8nCallbackRequest) -> N8nCallbackResponse:
+class StaleTaskAttemptError(Exception):
+    """Raised when a stale or superseded task attempt tries to persist results or mutate SearchRun status."""
+
+
+def process_n8n_callback(
+    db: Session,
+    payload: N8nCallbackRequest,
+    *,
+    expected_attempt_count: Optional[int] = None,
+    expected_worker_id: Optional[str] = None,
+    update_run_status: bool = True,
+) -> N8nCallbackResponse:
     """
-    Process an authenticated n8n batch callback in a single atomic database transaction.
+    Process an authenticated n8n batch callback (or Python worker incremental/final persistence)
+    in a single atomic database transaction.
     - Deduplicates leads using priority: Apify placeId -> normalized website -> normalized company_name + address.
     - Preserves original Apify data and Stage 1 / Stage 2 AI outputs in raw_payload.
     - Always uses original Apify title for Lead.company_name.
+    - When `expected_attempt_count` or `expected_worker_id` is provided (Python worker), enforces
+      attempt and ownership fencing so stale executions cannot overwrite a newer attempt.
     - Rolls back the entire transaction if any unexpected persistence error occurs.
     """
     stmt_run = (
@@ -324,11 +338,38 @@ def process_n8n_callback(db: Session, payload: N8nCallbackRequest) -> N8nCallbac
             detail=f"SearchRun with id {payload.search_run_id} not found",
         )
 
+    if expected_attempt_count is not None or expected_worker_id is not None:
+        if search_run.status != SearchRunStatus.RUNNING.value:
+            raise StaleTaskAttemptError(
+                f"Stale execution rejected for SearchRun id={search_run.id}: current status is "
+                f"{search_run.status!r} (expected 'running')."
+            )
+        if (
+            expected_attempt_count is not None
+            and (search_run.attempt_count or 0) != expected_attempt_count
+        ):
+            raise StaleTaskAttemptError(
+                f"Stale execution rejected for SearchRun id={search_run.id}: current attempt_count is "
+                f"{search_run.attempt_count} (expected {expected_attempt_count})."
+            )
+        if (
+            expected_worker_id is not None
+            and search_run.worker_id is not None
+            and search_run.worker_id != expected_worker_id
+        ):
+            raise StaleTaskAttemptError(
+                f"Stale execution rejected for SearchRun id={search_run.id}: current worker_id is "
+                f"{search_run.worker_id!r} (expected {expected_worker_id!r})."
+            )
+
     try:
         if payload.status == "failed":
-            search_run.status = SearchRunStatus.FAILED.value
-            search_run.completed_at = utc_now()
-            db.add(search_run)
+            if update_run_status:
+                search_run.status = SearchRunStatus.FAILED.value
+                search_run.completed_at = utc_now()
+                search_run.worker_id = None
+                search_run.lease_expires_at = None
+                db.add(search_run)
             db.commit()
             return N8nCallbackResponse(
                 search_run_id=search_run.id,
@@ -343,9 +384,13 @@ def process_n8n_callback(db: Session, payload: N8nCallbackRequest) -> N8nCallbac
         existing_leads: list[Lead] = list(
             db.scalars(select(Lead).options(selectinload(Lead.analysis))).all()
         )
-        linked_lead_ids_for_run: set[int] = {
-            link.lead_id for link in search_run.search_run_leads
-        }
+        linked_lead_ids_for_run: set[int] = set(
+            db.scalars(
+                select(SearchRunLead.lead_id).where(
+                    SearchRunLead.search_run_id == search_run.id
+                )
+            ).all()
+        )
 
         leads_created = 0
         leads_updated = 0
@@ -451,13 +496,34 @@ def process_n8n_callback(db: Session, payload: N8nCallbackRequest) -> N8nCallbac
                     lead_record.analysis = analysis_record
                 else:
                     analysis_record = lead_record.analysis
-                    analysis_record.business_summary = item.analysis.business_summary
-                    analysis_record.personalization_observation = (
-                        item.analysis.personalization_observation
-                    )
-                    analysis_record.potential_opportunity = item.analysis.potential_opportunity
-                    analysis_record.icebreaker = item.analysis.icebreaker
-                    analysis_record.confidence = item.analysis.confidence
+                    if (
+                        isinstance(item.analysis.business_summary, str)
+                        and item.analysis.business_summary.strip()
+                    ):
+                        analysis_record.business_summary = (
+                            item.analysis.business_summary.strip()
+                        )
+                    if (
+                        isinstance(item.analysis.personalization_observation, str)
+                        and item.analysis.personalization_observation.strip()
+                    ):
+                        analysis_record.personalization_observation = (
+                            item.analysis.personalization_observation.strip()
+                        )
+                    if (
+                        isinstance(item.analysis.potential_opportunity, str)
+                        and item.analysis.potential_opportunity.strip()
+                    ):
+                        analysis_record.potential_opportunity = (
+                            item.analysis.potential_opportunity.strip()
+                        )
+                    if (
+                        isinstance(item.analysis.icebreaker, str)
+                        and item.analysis.icebreaker.strip()
+                    ):
+                        analysis_record.icebreaker = item.analysis.icebreaker.strip()
+                    if item.analysis.confidence is not None:
+                        analysis_record.confidence = item.analysis.confidence
                     db.add(analysis_record)
                 db.flush()
                 analyses_upserted += 1
@@ -480,9 +546,14 @@ def process_n8n_callback(db: Session, payload: N8nCallbackRequest) -> N8nCallbac
                 linked_lead_ids_for_run.add(lead_record.id)
                 leads_linked += 1
 
-        search_run.status = SearchRunStatus.COMPLETED.value
-        search_run.completed_at = utc_now()
-        db.add(search_run)
+        if update_run_status:
+            search_run.status = SearchRunStatus.COMPLETED.value
+            search_run.completed_at = utc_now()
+            search_run.last_error = None
+            search_run.worker_id = None
+            search_run.lease_expires_at = None
+            search_run.pipeline_stage = "completed"
+            db.add(search_run)
         db.commit()
 
         return N8nCallbackResponse(
@@ -495,7 +566,7 @@ def process_n8n_callback(db: Session, payload: N8nCallbackRequest) -> N8nCallbac
             analyses_upserted=analyses_upserted,
         )
 
-    except HTTPException:
+    except (HTTPException, StaleTaskAttemptError):
         db.rollback()
         raise
     except Exception as exc:

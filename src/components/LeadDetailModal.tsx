@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Copy, Check, ExternalLink, X } from 'lucide-react';
 import { LeadDetailResponse } from '../types/leadforge';
 import {
+  buildCommercialQualification,
   DIMENSION_DISPLAY_ORDER,
   formatDimensionName,
   formatTimestampCompact,
@@ -29,6 +30,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
   }
 
   const externalUrl = normalizeExternalWebsiteUrl(lead?.website);
+  const qualification = lead ? buildCommercialQualification(lead) : null;
 
   const handleCopyIcebreaker = async (text: string) => {
     try {
@@ -96,7 +98,7 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
             </div>
           )}
 
-          {lead && (
+          {lead && qualification && (
             <div className="p-6 space-y-8">
               {/* Section 1: Public Business & Contact Information */}
               <section aria-labelledby="detail-contact-heading">
@@ -178,12 +180,120 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                 </dl>
               </section>
 
-              {/* Section 2: Deterministic Lead Scoring Breakdown */}
+              {/* Section 2: Commercial Qualification & Recommended Service Fit */}
+              <section
+                aria-labelledby="detail-qualification-heading"
+                data-testid="commercial-qualification-section"
+              >
+                <div className="pb-2 border-b border-slate-200">
+                  <h3 id="detail-qualification-heading" className="text-sm font-bold text-slate-900">
+                    02. Commercial Qualification & Recommended Service Fit
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Evidence-based assessment for custom software, AI integration, and workflow automation services (no unverified budget or intent claims).
+                  </p>
+                </div>
+
+                <div className="mt-3 space-y-4 text-xs">
+                  <div className="p-3.5 bg-emerald-50/50 border border-emerald-200 rounded-lg">
+                    <div className="font-semibold text-emerald-950">
+                      Why {lead.company_name} is a High-Value Prospect
+                    </div>
+                    <p className="mt-1 text-slate-800 leading-relaxed">
+                      {qualification.whyGoodProspect}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                      <div className="font-semibold text-slate-800">
+                        Business Scale & Operational Complexity
+                      </div>
+                      <p className="mt-1 text-slate-700 leading-relaxed">
+                        {qualification.operationalComplexity}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                      <div className="font-semibold text-slate-800">
+                        Website & Digital Systems Status
+                      </div>
+                      <p className="mt-1 text-slate-700 leading-relaxed">
+                        {qualification.digitalSystemsAssessment}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="font-semibold text-slate-900 mb-2">
+                      Matched Service Offerings ({qualification.recommendedServices.length})
+                    </div>
+                    <div className="space-y-2.5">
+                      {qualification.recommendedServices.map((rec) => (
+                        <div
+                          key={rec.service}
+                          className="p-3 bg-white border border-slate-200 rounded-lg"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-900">{rec.service}</span>
+                            <span
+                              className={`text-[11px] font-semibold ${
+                                rec.fitLevel === 'Strong Fit'
+                                  ? 'text-emerald-700'
+                                  : 'text-blue-700'
+                              }`}
+                            >
+                              {rec.fitLevel}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-slate-700 leading-relaxed">{rec.rationale}</p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            <span className="font-medium text-slate-700">Supporting signal: </span>
+                            {rec.evidenceSignal}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {qualification.extractedServicesOffered.length > 0 && (
+                    <div>
+                      <div className="font-semibold text-slate-800 mb-1.5">
+                        Verified Business Service Lines ({qualification.extractedServicesOffered.length})
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {qualification.extractedServicesOffered.map((serviceLine) => (
+                          <span
+                            key={serviceLine}
+                            className="px-2 py-0.5 text-[11px] text-slate-700 bg-slate-100 border border-slate-200 rounded"
+                          >
+                            {serviceLine}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {qualification.supportingEvidence.length > 0 && (
+                    <div>
+                      <div className="font-semibold text-slate-800 mb-1.5">
+                        Observed Supporting Evidence
+                      </div>
+                      <ul className="space-y-1 text-slate-700">
+                        {qualification.supportingEvidence.map((item, idx) => (
+                          <li key={idx}>• {item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* Section 3: Deterministic Lead Scoring Breakdown */}
               <section aria-labelledby="detail-scoring-heading">
                 <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2 pb-2 border-b border-slate-200">
                   <div>
                     <h3 id="detail-scoring-heading" className="text-sm font-bold text-slate-900">
-                      02. Deterministic Lead Score Breakdown
+                      03. Deterministic Lead Score Breakdown
                     </h3>
                     <p className="text-[11px] text-slate-500">
                       Calculated by FastAPI rule engine ({lead.score_breakdown.formula_version}) — independent of AI confidence.
@@ -233,15 +343,15 @@ export const LeadDetailModal: React.FC<LeadDetailModalProps> = ({
                 </div>
               </section>
 
-              {/* Section 3: AI Qualitative Evidence & Outreach Recommendations */}
+              {/* Section 4: AI Qualitative Evidence & Outreach Recommendations */}
               <section aria-labelledby="detail-ai-heading">
                 <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2 pb-2 border-b border-slate-200">
                   <div>
                     <h3 id="detail-ai-heading" className="text-sm font-bold text-slate-900">
-                      03. AI Qualitative Analysis & Outreach Evidence
+                      04. AI Qualitative Analysis & Outreach Evidence
                     </h3>
                     <p className="text-[11px] text-slate-500">
-                      Structured qualitative evidence extracted during n8n workflow qualification.
+                      Structured qualitative evidence extracted by Gemini Stage 1 & Stage 2 analysis.
                     </p>
                   </div>
                   {lead.analysis?.confidence !== null && lead.analysis?.confidence !== undefined && (

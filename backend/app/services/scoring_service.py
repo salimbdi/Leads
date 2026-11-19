@@ -404,6 +404,17 @@ def _evaluate_digital_presence_opportunity(
     }
 
 
+def _flatten_str_list(items: Any) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    result: list[str] = []
+    for item in items:
+        s = _safe_str(item)
+        if s:
+            result.append(s)
+    return result
+
+
 def _evaluate_service_opportunity(
     has_website: bool,
     business_type_lower: str,
@@ -416,11 +427,11 @@ def _evaluate_service_opportunity(
     """
     Dimension 1: Service Opportunity (0–30 points).
     Evaluates concrete evidence of need for our 5 commercial services:
-    - Website development & redesign
-    - Web application development
-    - Mobile application development
+    - Custom web applications & website development
+    - Mobile applications
     - Business management systems
-    - AI solutions & workflow automation
+    - AI integrations & automation
+    - n8n automation systems
     Missing AI analysis does not automatically penalize the business to zero.
     """
     max_pts = DIMENSION_MAX_POINTS["service_opportunity"]
@@ -428,6 +439,12 @@ def _evaluate_service_opportunity(
 
     stage1 = raw_dict.get("stage1_ai") if isinstance(raw_dict.get("stage1_ai"), dict) else {}
     stage2 = raw_dict.get("stage2_ai") if isinstance(raw_dict.get("stage2_ai"), dict) else {}
+
+    stage1_services = _flatten_str_list(stage1.get("services"))
+    stage1_observations = _flatten_str_list(stage1.get("website_observations"))
+    stage1_needs = _flatten_str_list(stage1.get("potential_digital_needs"))
+    stage1_reasons = _flatten_str_list(stage1.get("opportunity_reasons"))
+
     combined_text = " ".join(
         filter(
             None,
@@ -438,13 +455,16 @@ def _evaluate_service_opportunity(
                 _safe_str(stage1.get("business_summary")),
                 _safe_str(stage2.get("potential_opportunity")),
                 _safe_str(stage2.get("personalization_observation")),
+                " ".join(stage1_observations),
+                " ".join(stage1_needs),
+                " ".join(stage1_reasons),
             ],
         )
     ).lower()
 
     pillar_points = 0
 
-    # Pillar 1: Website Development & Redesign (+8)
+    # Pillar 1: Custom Web Applications & Website Development (+8)
     if not has_website or any(kw in combined_text for kw in WEBSITE_OPPORTUNITY_KEYWORDS):
         pillar_points += 8
         if not has_website:
@@ -459,20 +479,52 @@ def _evaluate_service_opportunity(
             "Opportunity for custom web/mobile booking, portal, or interactive application (+8 pts)."
         )
 
-    # Pillar 3: Business Management Systems (+7)
-    if any(kw in combined_text for kw in BUSINESS_SYSTEM_KEYWORDS):
+    # Pillar 3: Business Management Systems (+7) — includes multi-specialty/multi-location operational scale
+    has_operational_complexity = len(stage1_services) >= 5 or any(
+        kw in combined_text
+        for kw in (
+            "multi-practitioner",
+            "multi-specialty",
+            "multi-location",
+            "multiple locations",
+            "patient forms",
+            "wellness plan",
+            "insurance",
+        )
+    )
+    if any(kw in combined_text for kw in BUSINESS_SYSTEM_KEYWORDS) or has_operational_complexity:
         pillar_points += 7
         reasons.append("Opportunity for CRM, patient/client recall, or management system (+7 pts).")
 
-    # Pillar 4: AI Solutions & Workflow Automation (+7)
-    if any(kw in combined_text for kw in AI_AUTOMATION_KEYWORDS):
+    # Pillar 4: AI Integrations & n8n Workflow Automation (+7)
+    has_workflow_signals = any(
+        kw in combined_text
+        for kw in (
+            "n8n",
+            "referral",
+            "retention",
+            "recurring",
+            "enrollment",
+            "renewal",
+            "same-day",
+            "emergency",
+            "bilingual",
+            "patient forms",
+        )
+    )
+    if any(kw in combined_text for kw in AI_AUTOMATION_KEYWORDS) or has_workflow_signals:
         pillar_points += 7
         reasons.append("Opportunity for AI assistant or workflow automation (+7 pts).")
 
     capped_pillar_points = min(22, pillar_points)
 
     # Actionable AI opportunity specificity bonus (0–8 pts)
-    opp_clean = potential_opportunity.strip() or _safe_str(stage2.get("potential_opportunity"))
+    opp_clean = (
+        potential_opportunity.strip()
+        or _safe_str(stage2.get("potential_opportunity"))
+        or " ".join(stage1_reasons).strip()
+        or " ".join(stage1_needs).strip()
+    )
     evidence_bonus = 0
     if len(opp_clean) >= 20:
         evidence_bonus = 8

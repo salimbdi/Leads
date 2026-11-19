@@ -7,12 +7,55 @@ import fs from "node:fs";
 import dotenv from "dotenv";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
-dotenv.config();
+const PROJECT_ROOT = path.resolve(process.cwd());
+const PROJECT_ENV_PATH = path.join(PROJECT_ROOT, ".env");
+const PROJECT_ENV_EXAMPLE_PATH = path.join(PROJECT_ROOT, ".env.example");
+
+// Load canonical project-root .env explicitly with override:true so stale container
+// parent-process variables (e.g. AI_PROVIDER=mock) never mask configured .env values.
+if (fs.existsSync(PROJECT_ENV_EXAMPLE_PATH)) {
+  dotenv.config({ path: PROJECT_ENV_EXAMPLE_PATH, override: false });
+}
+if (fs.existsSync(PROJECT_ENV_PATH)) {
+  dotenv.config({ path: PROJECT_ENV_PATH, override: true });
+}
+
+// Re-apply non-empty provider credentials from .env.example if missing/empty in .env
+if (fs.existsSync(PROJECT_ENV_EXAMPLE_PATH)) {
+  const exampleParsed = dotenv.parse(fs.readFileSync(PROJECT_ENV_EXAMPLE_PATH));
+  for (const key of ["APIFY_API_TOKEN", "GEMINI_API_KEY", "AI_PROVIDER", "AI_MODEL"]) {
+    const cur = (process.env[key] || "").trim();
+    const fallback = (exampleParsed[key] || "").trim();
+    if ((!cur || (key === "AI_PROVIDER" && cur === "mock")) && fallback) {
+      process.env[key] = fallback;
+    }
+  }
+}
 
 const PORT = Number(process.env.PORT || 3000);
 const FASTAPI_HOST = process.env.BACKEND_HOST || "127.0.0.1";
 const FASTAPI_PORT = Number(process.env.BACKEND_PORT || 8001);
-const FASTAPI_ORIGIN = `http://${FASTAPI_HOST}:${FASTAPI_PORT}`;
+const DEFAULT_LOCAL_BACKEND = `http://${FASTAPI_HOST}:${FASTAPI_PORT}`;
+
+// Resolve effective backend origin: default to local FastAPI so local SQLite + Python worker
+// power the dashboard directly; use remote Render only when USE_REMOTE_BACKEND=true is set.
+const rawOrigin =
+  process.env.USE_REMOTE_BACKEND === "true"
+    ? process.env.BACKEND_URL || process.env.FASTAPI_ORIGIN || "https://leads-einq.onrender.com"
+    : process.env.FASTAPI_ORIGIN || DEFAULT_LOCAL_BACKEND;
+const FASTAPI_ORIGIN = rawOrigin.trim().replace(/\/+$/, "");
+
+function isRemoteBackend(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === "https:" ||
+      (url.hostname !== "127.0.0.1" && url.hostname !== "localhost" && url.hostname !== "0.0.0.0")
+    );
+  } catch {
+    return false;
+  }
+}
 
 let fastApiProcess: ChildProcess | null = null;
 
@@ -36,20 +79,41 @@ function isPortListening(host: string, port: number, timeoutMs = 600): Promise<b
 }
 
 async function ensureFastApiRunning(): Promise<void> {
+  if (isRemoteBackend(FASTAPI_ORIGIN)) {
+    return;
+  }
   const alreadyUp = await isPortListening(FASTAPI_HOST, FASTAPI_PORT);
   if (alreadyUp) {
     return;
   }
 
-  const venvPython = path.resolve(process.cwd(), ".venv/bin/python");
+  const venvPython = path.resolve(PROJECT_ROOT, ".venv/bin/python");
   if (!fs.existsSync(venvPython)) {
     const { execSync } = await import("node:child_process");
     execSync(
       "python3 -m venv --without-pip .venv && curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3 && .venv/bin/pip install -q -r backend/requirements.txt",
-      { cwd: process.cwd(), stdio: "inherit" }
+      { cwd: PROJECT_ROOT, stdio: "inherit" }
     );
   }
   const pythonBin = fs.existsSync(venvPython) ? venvPython : "python3";
+
+  // Build a clean environment for FastAPI + embedded worker without empty overrides
+  const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of [
+    "APIFY_API_TOKEN",
+    "APIFY_TOKEN",
+    "GEMINI_API_KEY",
+    "AI_PROVIDER",
+    "AI_MODEL",
+    "DATABASE_URL",
+  ]) {
+    if (key in childEnv && (!childEnv[key] || !String(childEnv[key]).trim())) {
+      delete childEnv[key];
+    }
+  }
+  childEnv.DISCOVERY_EXECUTION_MODE =
+    (process.env.DISCOVERY_EXECUTION_MODE || "").trim() || "python";
+  childEnv.WORKER_ENABLED = (process.env.WORKER_ENABLED || "").trim() || "true";
 
   fastApiProcess = spawn(
     pythonBin,
@@ -63,9 +127,9 @@ async function ensureFastApiRunning(): Promise<void> {
       String(FASTAPI_PORT),
     ],
     {
-      cwd: process.cwd(),
+      cwd: PROJECT_ROOT,
       stdio: "inherit",
-      env: { ...process.env },
+      env: childEnv,
     }
   );
 
@@ -85,10 +149,32 @@ async function ensureFastApiRunning(): Promise<void> {
 }
 
 async function startServer() {
-  await ensureFastApiRunning();
+  if (!isRemoteBackend(FASTAPI_ORIGIN)) {
+    await ensureFastApiRunning();
+  }
 
   const app = express();
   app.use(express.json());
+
+  // CORS & Preflight handling for frontend clients and browser previews
+  app.use((req, res, next) => {
+    const origin = req.headers.origin || "*";
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, Accept, X-Callback-Secret, X-Requested-With"
+    );
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
 
   // Security restriction for public webhook tunnels (ngrok / Cloudflare Tunnel):
   // When accessed via a public tunnel hostname, expose ONLY the authenticated n8n callback
@@ -197,11 +283,16 @@ async function startServer() {
     }
   });
 
-  // Proxy /health and /api/* requests to the FastAPI backend on port 8000
+  // Proxy /health and /api/* requests to the configured FastAPI backend (local or Render)
   app.use(["/health", "/api"], async (req, res) => {
     try {
-      await ensureFastApiRunning();
-      const targetUrl = `${FASTAPI_ORIGIN}${req.originalUrl}`;
+      if (!isRemoteBackend(FASTAPI_ORIGIN)) {
+        await ensureFastApiRunning();
+      }
+      const cleanBase = FASTAPI_ORIGIN.replace(/\/+$/, "");
+      const cleanPath = req.originalUrl.startsWith("/") ? req.originalUrl : `/${req.originalUrl}`;
+      const targetUrl = `${cleanBase}${cleanPath}`;
+
       const headers: Record<string, string> = {
         Accept: req.headers.accept || "application/json",
       };
@@ -220,11 +311,22 @@ async function startServer() {
         headers,
       };
 
-      if (req.method !== "GET" && req.method !== "HEAD" && req.body && Object.keys(req.body).length > 0) {
-        init.body = JSON.stringify(req.body);
+      if (
+        req.method !== "GET" &&
+        req.method !== "HEAD" &&
+        req.body &&
+        (typeof req.body === "object" ? Object.keys(req.body).length > 0 : true)
+      ) {
+        init.body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+        if (!headers["Content-Type"]) {
+          headers["Content-Type"] = "application/json";
+        }
       }
 
-      const upstream = await fetch(targetUrl, init);
+      const upstream = await fetch(targetUrl, {
+        ...init,
+        signal: AbortSignal.timeout(35000),
+      });
       const contentType = upstream.headers.get("content-type") || "application/json";
       const bodyText = await upstream.text();
 
@@ -241,11 +343,15 @@ async function startServer() {
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  }
+ else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*all", (_req, res) => {

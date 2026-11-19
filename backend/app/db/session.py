@@ -22,7 +22,10 @@ def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) 
 
 def create_sqlite_engine(database_url: Optional[str] = None) -> Engine:
     """Create a configured SQLAlchemy Engine, applying SQLite PRAGMAs only to SQLite databases."""
-    resolved_url = database_url or get_settings().database_url
+    settings = get_settings()
+    resolved_url = database_url or settings.database_url
+    if resolved_url == "sqlite:///./leadforge.db":
+        resolved_url = f"sqlite:///{settings.get_resolved_database_path()}"
     connect_args: dict[str, Any] = {}
     if resolved_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
@@ -161,6 +164,49 @@ def _auto_score_leads_before_flush(
 event.listen(Session, "before_flush", _auto_score_leads_before_flush)
 
 
+def _migrate_sqlite_search_run_worker_columns(active_engine: Engine) -> None:
+    """
+    Safely add Phase 2 durable worker lifecycle columns (`attempt_count`, `started_at`, `last_error`,
+    `worker_id`, `lease_expires_at`) to existing SQLite `search_runs` tables without dropping or
+    resetting existing records.
+    """
+    if active_engine.dialect.name != "sqlite":
+        return
+
+    inspector = inspect(active_engine)
+    if "search_runs" not in inspector.get_table_names():
+        return
+
+    existing_cols = {col["name"] for col in inspector.get_columns("search_runs")}
+    with active_engine.begin() as conn:
+        if "attempt_count" not in existing_cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE search_runs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+                )
+            )
+        if "started_at" not in existing_cols:
+            conn.execute(
+                text("ALTER TABLE search_runs ADD COLUMN started_at DATETIME")
+            )
+        if "last_error" not in existing_cols:
+            conn.execute(
+                text("ALTER TABLE search_runs ADD COLUMN last_error TEXT")
+            )
+        if "worker_id" not in existing_cols:
+            conn.execute(
+                text("ALTER TABLE search_runs ADD COLUMN worker_id VARCHAR(128)")
+            )
+        if "lease_expires_at" not in existing_cols:
+            conn.execute(
+                text("ALTER TABLE search_runs ADD COLUMN lease_expires_at DATETIME")
+            )
+        if "pipeline_stage" not in existing_cols:
+            conn.execute(
+                text("ALTER TABLE search_runs ADD COLUMN pipeline_stage VARCHAR(64)")
+            )
+
+
 def init_db(target_engine: Optional[Engine] = None) -> None:
     """Import all models, initialize database tables, and run safe additive migrations."""
     # Ensure all models are registered on Base.metadata before create_all
@@ -168,6 +214,7 @@ def init_db(target_engine: Optional[Engine] = None) -> None:
 
     active_engine = target_engine or engine
     Base.metadata.create_all(bind=active_engine)
+    _migrate_sqlite_search_run_worker_columns(active_engine)
     _migrate_and_backfill_sqlite_scoring_columns(active_engine)
 
 

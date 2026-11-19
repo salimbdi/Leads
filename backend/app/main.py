@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import logging
 import platform
 
 import fastapi
@@ -13,11 +14,38 @@ from backend.app.db import get_schema_metadata, init_db, verify_database_connect
 from backend.app.routers import integrations_router, leads_router, search_runs_router
 
 
+from backend.app.services.worker_service import (
+    start_background_worker,
+    stop_background_worker,
+)
+
+logger = logging.getLogger("backend.app.main")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    """Initialize SQLite tables on FastAPI startup."""
+    """
+    Initialize SQLite tables and optionally start embedded Python background worker on FastAPI startup.
+    Embedded worker starts ONLY when WORKER_ENABLED=true is explicitly configured.
+    DISCOVERY_EXECUTION_MODE=python alone enqueues tasks without starting an in-process worker thread.
+    """
     init_db()
-    yield
+    current_settings = get_settings()
+    diag_msg = current_settings.format_runtime_diagnostic_log(component="FastAPI")
+    logger.info(diag_msg)
+    print(diag_msg, flush=True)
+    should_run_worker = bool(current_settings.worker_enabled)
+    if should_run_worker:
+        start_background_worker(
+            mock_mode=(current_settings.ai_provider == "mock")
+        )
+    try:
+        yield
+    finally:
+        if should_run_worker:
+            stop_background_worker(
+                timeout=current_settings.worker_shutdown_timeout_seconds
+            )
 
 
 def create_app() -> FastAPI:
@@ -38,6 +66,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=settings.cors_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -66,6 +95,7 @@ def create_app() -> FastAPI:
             },
             "database": db_status,
             "config": current_settings.get_public_summary(),
+            "diagnostic": current_settings.get_runtime_diagnostic(),
         }
 
     @app.get("/health", tags=["system"])
@@ -77,6 +107,11 @@ def create_app() -> FastAPI:
     async def api_health_check() -> dict[str, object]:
         """API-namespaced health check endpoint for frontend proxy consumption."""
         return build_health_payload()
+
+    @app.get("/api/v1/config/diagnostic", tags=["system"])
+    async def runtime_config_diagnostic() -> dict[str, object]:
+        """Return safe non-secret runtime configuration diagnostic metadata."""
+        return get_settings().get_runtime_diagnostic()
 
     @app.get("/api/v1/foundation", tags=["system"])
     async def foundation_status() -> dict[str, object]:

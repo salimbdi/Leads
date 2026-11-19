@@ -9,6 +9,7 @@ from backend.app.schemas.search_run import (
     PaginatedSearchRunsResponse,
     SearchRunCreateRequest,
     SearchRunDetailResponse,
+    SearchRunPipelineStatusResponse,
     SearchRunSummaryResponse,
 )
 from backend.app.services.search_run_service import (
@@ -16,9 +17,23 @@ from backend.app.services.search_run_service import (
     dispatch_existing_search_run,
     get_search_run_detail,
     list_search_runs,
+    list_search_runs_pipeline_status,
 )
 
 router = APIRouter(prefix="/api/v1/search-runs", tags=["search-runs"])
+
+
+@router.get(
+    "/pipeline-status",
+    response_model=list[SearchRunPipelineStatusResponse],
+    summary="Retrieve real-time pipeline execution stage and error status for recent SearchRuns",
+)
+def list_search_runs_pipeline_status_endpoint(
+    limit: int = Query(default=25, ge=1, le=100, description="Maximum runs to inspect"),
+    db: Session = Depends(get_db),
+) -> list[SearchRunPipelineStatusResponse]:
+    """Return real-time pipeline execution stage, timestamps, and error diagnostics for recent SearchRuns."""
+    return list_search_runs_pipeline_status(db, limit=limit)
 
 
 @router.post(

@@ -430,3 +430,23 @@ def test_endpoints_avoid_n_plus_one_queries(
         assert len(select_statements) <= 3
     finally:
         event.remove(api_test_engine, "before_cursor_execute", count_select_queries)
+
+
+def test_cors_preflight_allows_preview_and_remote_origins(api_client: TestClient) -> None:
+    test_origins = [
+        "https://ais-dev-22hw4764cwmpv4lmuqibaj-371598352702.europe-west1.run.app",
+        "https://leads-einq.onrender.com",
+        "http://localhost:3000",
+    ]
+    for origin in test_origins:
+        res = api_client.options(
+            "/api/v1/search-runs",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert res.status_code == 200
+        assert res.headers.get("access-control-allow-origin") == origin
+        assert res.headers.get("access-control-allow-credentials") == "true"

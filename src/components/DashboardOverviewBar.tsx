@@ -133,7 +133,7 @@ export const DashboardOverviewBar: React.FC<DashboardOverviewBarProps> = ({
             {isLoading && !metrics ? '—' : runningRuns}
           </div>
           <div className="mt-1 text-xs text-slate-500">
-            {runningRuns > 0 ? 'Active n8n execution in progress' : 'No active workflow runs'}
+            {runningRuns > 0 ? 'Active Python worker discovery in progress' : 'No active discovery runs'}
           </div>
         </div>
       </div>
